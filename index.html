@@ -86,6 +86,29 @@ body{
 .seg button:disabled{opacity:.45;cursor:not-allowed}
 .searchbox textarea[readonly]{background:var(--surface2);color:var(--muted);cursor:default}
 
+/* ── 觀看模式：版面全留給搜尋結果，其餘縮小/隱藏 ── */
+.role-view .searchbox{display:none}
+.role-view .legend{display:none}
+.role-view .segrow{display:none}
+.role-view .app-header .sub{display:none}
+.role-view .rostercount{font-size:11px;opacity:.7}
+.role-view .app-header{padding:10px 0 4px}
+.role-view .brand h1{font-size:19px}
+.role-view .controls{padding-top:6px;padding-bottom:6px}
+.role-view .syncbar{margin-bottom:2px}
+.role-view .tier{margin-top:10px}
+.role-view .qblock{margin-top:12px}
+/* 手機觀看模式：更精簡，整個標題列收掉，只留細同步列＋結果 */
+@media(max-width:860px){
+  .role-view .app-header{display:none}
+  .role-view .wrap{padding:0 12px 96px}
+  .role-view .controls{padding-top:4px;padding-bottom:6px}
+  .role-view .syncbar{gap:8px}
+  .role-view .qh .qt{font-size:20px}
+  .role-view .cards{grid-template-columns:1fr;gap:8px}
+  .role-view .cname{font-size:23px}
+}
+
 /* Query blocks (multi-line) */
 .qblock{margin-top:16px}
 .qblock + .qblock{border-top:1px solid var(--line);padding-top:8px}
@@ -587,6 +610,8 @@ function setRole(r){
   if(lock){ ta.setAttribute('readonly','readonly'); ta.placeholder='等待主控輸入…（觀看模式）'; }
   else { ta.removeAttribute('readonly'); ta.placeholder=HOST_PH; ta.focus(); }
   document.querySelectorAll('.seg[aria-label="乾坤篩選"] button,.seg[aria-label="名單範圍"] button').forEach(b=>b.disabled=lock);
+  document.documentElement.classList.toggle('role-view', lock);   // 觀看模式：版面留給結果
+  document.documentElement.classList.toggle('role-host', !lock);
   if(role==='host') broadcastLive();
   updateSyncUI();
 }
