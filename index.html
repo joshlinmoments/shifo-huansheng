@@ -163,6 +163,17 @@ body{
 .card.added .addmark{opacity:1}
 .plus{position:absolute;top:8px;right:10px;color:var(--faint);font-size:18px;line-height:1}
 .card.added .plus{display:none}
+.cards{align-items:start}
+.card.mini{padding:8px 12px;gap:8px;border-color:var(--good);background:color-mix(in srgb,var(--good) 7%,var(--surface))}
+.card.mini .mininame{font-size:16px;font-weight:800;color:var(--good);letter-spacing:.03em;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card.mini .mininame .hit{color:var(--good)} .card.mini .mininame .hit::after{display:none}
+.card.mini .miniarea{font-size:11.5px;color:var(--muted);white-space:nowrap}
+.card.mini .miniexpand{font-size:12px;color:var(--faint);white-space:nowrap}
+.rm-card{position:absolute;top:8px;right:10px;font-size:11.5px;font-weight:700;color:var(--kun);background:var(--kun-bg);border:1px solid var(--kun-line);border-radius:7px;padding:2px 7px;cursor:pointer}
+.card.expanded .addmark,.card.expanded .plus{display:none}
+.fallback-toggle{display:block;width:100%;text-align:left;margin:11px 0 4px;padding:11px 13px;font-family:inherit;font-size:13px;font-weight:700;color:var(--gold-strong);cursor:pointer;background:var(--surface2);border:1px dashed var(--gold);border-radius:12px}
+.fallback-toggle:hover{background:var(--hl)}
+:root[data-theme="dark"] .fallback-toggle,:root:not([data-theme="light"]) .fallback-toggle{color:var(--gold)}
 
 /* empty / prompt states */
 .state{border:1.5px dashed var(--line);border-radius:16px;padding:34px 22px;text-align:center;color:var(--muted);margin-top:16px}
@@ -361,6 +372,8 @@ let called=loadCalled();
 function loadCalled(){ try{return JSON.parse(localStorage.getItem('shifo_called_v1')||'[]')}catch(e){return[]} }
 function saveCalled(){ try{localStorage.setItem('shifo_called_v1',JSON.stringify(called))}catch(e){} }
 const calledSet=()=>new Set(called);
+const expandedCards=new Set();   // 本機：已加入但被點開的卡
+const expandedFallback=new Set(); // 本機：被點開的「其他單位」查詢行
 
 /* ---------- render results ---------- */
 const el=id=>document.getElementById(id);
@@ -385,8 +398,16 @@ const titles={1:'完全同字',2:'同音不同字',3:'相近音（寬鬆）',4:'
 
 function cardHTML(r,mt,added,showUnit){
   const gc=r.g==='乾'?'q':'k';
+  if(added && !expandedCards.has(r.key)){       // 已加入 → 收合小卡，點開再展開
+    return `<button class="card mini added" data-key="${r.key}">
+      <span class="gstripe ${gc}"></span>
+      <span class="mininame">✓ ${nameHTML(r,mt)}</span>
+      <span class="miniarea">${showUnit?esc(r.unit)+'·':''}${esc(r.area)}</span>
+      <span class="miniexpand">▸ 點開</span>
+    </button>`;
+  }
   const zh=zhuHTML(r,mt);
-  return `<button class="card ${added?'added':''}" data-key="${r.key}">
+  return `<button class="card ${added?'added expanded':''}" data-key="${r.key}">
     <span class="gstripe ${gc}"></span>
     <span class="cbody">
       <span class="cname">${nameHTML(r,mt)}</span>
@@ -398,7 +419,7 @@ function cardHTML(r,mt,added,showUnit){
         <span class="cno mono">${r.g}${String(r.seq).padStart(4,'0')}</span>
       </span>
     </span>
-    <span class="plus">＋</span><span class="addmark">✓ 已加</span>
+    ${added?`<span class="rm-card" data-key="${r.key}" role="button" aria-label="移出已叫到">✕ 移出</span>`:`<span class="plus">＋</span>`}
   </button>`;
 }
 
@@ -451,11 +472,12 @@ function queryBlockHTML(line, idx, cs){
   // fallback：三重光明沒有「強配對」(同字/同音) → 自動到其他單位（全部名單）找，並標出單位
   if(scope==='mine' && bestTier(list) > 2){
     const others = matchList(qchars, OTHER_ROSTER);
-    const strong = others.filter(x=>x.mt.tier<=2);
-    const show = strong.length?strong:others;   // 其他單位有強配對就只列強的，否則列相近
-    if(show.length){
-      body += `<div class="fallback-h">🔎 其他單位有 ${show.length} 位${strong.length?'同字/同音':'相近'}（全部名單）</div>`;
-      body += tierGroupsHTML(show, cs, true);
+    if(others.length){
+      const strong = others.filter(x=>x.mt.tier<=2);
+      const show = strong.length?strong:others;
+      const opened = expandedFallback.has(line);
+      body += `<button class="fallback-toggle ${opened?'open':''}" data-line="${esc(line)}">🔎 其他單位有 ${show.length} 位${strong.length?'同字/同音':'相近'}　${opened?'▾ 收合':'▸ 點開查看'}</button>`;
+      if(opened) body += tierGroupsHTML(show, cs, true);
     }
   }
   return `<section class="qblock">${head}${body}</section>`;
@@ -517,14 +539,15 @@ function renderCalled(){
 }
 
 function addCalled(key){
-  const has=called.includes(key);
-  if(calledRef){                      // 同步模式：寫入共用資料庫，onCalled 會更新畫面
-    if(has) calledRef.child(key).remove(); else calledRef.child(key).set({o:Date.now()});
-    toast((has?'已移除 ':'已加入 ')+byKey(key).name);
-  } else {                            // 離線/未連線：本機
-    if(!has) called.push(key); else called=called.filter(k=>k!==key);
-    saveCalled(); renderCalled(); toast((has?'已移除 ':'已加入 ')+byKey(key).name);
-  }
+  if(called.includes(key)) return;
+  expandedCards.delete(key);
+  if(calledRef){ calledRef.child(key).set({o:Date.now()}); toast('已加入 '+byKey(key).name); }
+  else { called.push(key); saveCalled(); renderCalled(); render(); toast('已加入 '+byKey(key).name); }
+}
+function removeCalled(key){
+  expandedCards.delete(key);
+  if(calledRef){ calledRef.child(key).remove(); toast('已移出 '+byKey(key).name); }
+  else { called=called.filter(k=>k!==key); saveCalled(); renderCalled(); render(); toast('已移出 '+byKey(key).name); }
 }
 
 /* ---------- toast ---------- */
@@ -536,16 +559,22 @@ function toast(msg){ const t=el('toast'); t.textContent=msg; t.classList.add('sh
 el('q').addEventListener('input',()=>{ render(); if(role==='host' && !applyingRemote) broadcastLive(); }); // Enter=換行
 el('clearBtn').addEventListener('click',()=>{ el('q').value=''; render(); if(role==='host'){ broadcastLive(); el('q').focus(); } });
 results.addEventListener('click',e=>{
+  const ft=e.target.closest('.fallback-toggle');
+  if(ft){ const ln=ft.dataset.line; expandedFallback.has(ln)?expandedFallback.delete(ln):expandedFallback.add(ln); render(); return; }
+  const rm=e.target.closest('.rm-card');
+  if(rm){ removeCalled(rm.dataset.key); return; }
   const c=e.target.closest('.card'); if(!c) return;
   const key=c.dataset.key;
-  addCalled(key);
-  // sync every card of this person across all query blocks
-  const on=calledSet().has(key);
-  results.querySelectorAll(`.card[data-key="${CSS.escape(key)}"]`).forEach(x=>x.classList.toggle('added', on));
+  if(calledSet().has(key)){                 // 已加入 → 切換展開/收合（本機檢視）
+    expandedCards.has(key)?expandedCards.delete(key):expandedCards.add(key);
+    render();
+  } else {                                  // 未加入 → 加入（加入後自動收合）
+    addCalled(key);
+  }
 });
 el('calledBody').addEventListener('click',e=>{
   const b=e.target.closest('.rm'); if(!b) return;
-  addCalled(b.dataset.key); render();
+  removeCalled(b.dataset.key);
 });
 document.querySelectorAll('.seg').forEach(seg=>{
   seg.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
@@ -632,9 +661,7 @@ function onLive(d){
 function onCalled(obj){
   const entries=Object.entries(obj||{}).sort((a,b)=>((a[1]&&a[1].o)||0)-((b[1]&&b[1].o)||0));
   called=entries.map(e=>e[0]);
-  renderCalled();
-  const cs=calledSet();
-  results.querySelectorAll('.card').forEach(x=>x.classList.toggle('added', cs.has(x.dataset.key)));
+  renderCalled(); render();
 }
 function initSync(){
   try{
